@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TP Indústria · Compras e Estoque</title>
+  <link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+
+  <!-- Aviso quando o config.js ainda não foi preenchido -->
+  <section id="tela-config" class="tela-central" hidden>
+    <div class="cartao-central">
+      <h1>Configuração pendente</h1>
+      <p>Abra o arquivo <code>js/config.js</code> e preencha a URL e a chave pública do seu projeto no Supabase.</p>
+      <p class="sutil">O passo a passo está no guia <code>13_guia_supabase.md</code>.</p>
+    </div>
+  </section>
+
+  <!-- Login -->
+  <section id="tela-login" class="tela-central" hidden>
+    <form id="form-login" class="cartao-central" autocomplete="on">
+      <div class="marca marca-login">
+        <span class="marca-logo">TP</span>
+        <div>
+          <strong>TP Indústria</strong>
+          <span>Compras e controle de estoque</span>
+        </div>
+      </div>
+      <label>E-mail
+        <input type="email" name="email" required autocomplete="username">
+      </label>
+      <label>Senha
+        <input type="password" name="senha" required autocomplete="current-password">
+      </label>
+      <p id="login-erro" class="erro" hidden></p>
+      <button type="submit" class="botao primario largo">Entrar</button>
+    </form>
+  </section>
+
+  <!-- Aplicação -->
+  <div id="app" hidden>
+    <aside class="menu">
+      <div class="marca">
+        <span class="marca-logo">TP</span>
+        <div>
+          <strong>TP Indústria</strong>
+          <span>Compras e estoque</span>
+        </div>
+      </div>
+      <nav id="nav"></nav>
+      <div class="usuario">
+        <span id="usuario-email"></span>
+        <button id="botao-sair" class="botao fantasma pequeno" type="button">Sair</button>
+      </div>
+    </aside>
+    <main id="conteudo" tabindex="-1"></main>
+  </div>
+
+  <dialog id="modal"></dialog>
+  <div id="avisos" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/telas.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

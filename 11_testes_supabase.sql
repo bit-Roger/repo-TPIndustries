@@ -10,7 +10,7 @@
        teste | conferência | esperado | obtido | ok
    Todas as linhas devem vir com ok = true.
 
-   Os testes usam só as procedures (CALL) e funções (SELECT * FROM sp_...);
+   Os testes usam só as rotinas sp_* (SELECT sp_... e SELECT * FROM sp_...);
    as tabelas são lidas diretamente apenas para conferir o resultado.
    ===================================================================== */
 SET search_path = industria, public;
@@ -50,16 +50,16 @@ DECLARE
     c1 BIGINT; c2 BIGINT; i BIGINT; r BIGINT; ir BIGINT;
     v RECORD;
 BEGIN
-    CALL sp_GrupoProduto_Inserir('Matéria-prima', g);
-    CALL sp_Produto_Inserir(g, 'Chapa de aço 2mm', p1);
-    CALL sp_Produto_Inserir(g, 'Parafuso M8', p2);
-    CALL sp_Setor_Inserir('Produção', s);
-    CALL sp_Fornecedor_Inserir('Aços Brasil Ltda', '12.345.678/0001-90', f);
+    g := sp_GrupoProduto_Inserir('Matéria-prima');
+    p1 := sp_Produto_Inserir(g, 'Chapa de aço 2mm');
+    p2 := sp_Produto_Inserir(g, 'Parafuso M8');
+    s := sp_Setor_Inserir('Produção');
+    f := sp_Fornecedor_Inserir('Aços Brasil Ltda', '12.345.678/0001-90');
 
     /* Teste 1: primeira compra. Chapa 10 x 5,00 | Parafuso 100 x 0,50 */
-    CALL sp_Compra_Inserir(f, '2026-09-01', c1);
-    CALL sp_ItemCompra_Inserir(c1, p1, 10, 5.00, i);
-    CALL sp_ItemCompra_Inserir(c1, p2, 100, 0.50, i);
+    c1 := sp_Compra_Inserir(f, '2026-09-01');
+    i := sp_ItemCompra_Inserir(c1, p1, 10, 5.00);
+    i := sp_ItemCompra_Inserir(c1, p2, 100, 0.50);
 
     SELECT * INTO v FROM sp_Produto_Buscar(p2);
     PERFORM pg_temp.conferir('T1', 'parafuso: estoque', 100.000, v.prod_qtdEstoque);
@@ -68,8 +68,8 @@ BEGIN
                              (SELECT compra_valorTotal FROM sp_Compra_Buscar(c1)));
 
     /* Teste 2: segunda compra. Chapa 10 x 7,00 -> PM (10*5 + 10*7)/20 = 6,00 */
-    CALL sp_Compra_Inserir(f, '2026-09-10', c2);
-    CALL sp_ItemCompra_Inserir(c2, p1, 10, 7.00, i);
+    c2 := sp_Compra_Inserir(f, '2026-09-10');
+    i := sp_ItemCompra_Inserir(c2, p1, 10, 7.00);
 
     SELECT * INTO v FROM sp_Produto_Buscar(p1);
     PERFORM pg_temp.conferir('T2', 'chapa: estoque', 20.000, v.prod_qtdEstoque);
@@ -80,8 +80,8 @@ BEGIN
                              (SELECT compra_valorTotal FROM sp_Compra_Buscar(c2)));
 
     /* Teste 3: requisição de 5 chapas, valorizadas pelo PM 6,00 */
-    CALL sp_Requisicao_Inserir(s, NULL, r);
-    CALL sp_ItemRequisicao_Inserir(r, p1, 5, ir);
+    r := sp_Requisicao_Inserir(s, NULL);
+    ir := sp_ItemRequisicao_Inserir(r, p1, 5);
 
     SELECT * INTO v FROM sp_Produto_Buscar(p1);
     PERFORM pg_temp.conferir('T3', 'chapa: estoque', 15.000, v.prod_qtdEstoque);
@@ -93,25 +93,25 @@ BEGIN
 
     /* Teste 4: estoque insuficiente -> erro TP011, estoque continua 15 */
     PERFORM pg_temp.conferir('T4', 'requisição acima do estoque: código do erro', 'TP011',
-                             pg_temp.erro_de(format('CALL sp_ItemRequisicao_Inserir(%s, %s, 1000)', r, p1)));
+                             pg_temp.erro_de(format('SELECT sp_ItemRequisicao_Inserir(%s, %s, 1000)', r, p1)));
     PERFORM pg_temp.conferir('T4', 'chapa: estoque inalterado', 15.000,
                              (SELECT prod_qtdEstoque FROM sp_Produto_Buscar(p1)));
 
     /* Teste 5: alterar a quantidade da requisição de 5 para 8 */
-    CALL sp_ItemRequisicao_Alterar(ir, p1, 8);
+    PERFORM sp_ItemRequisicao_Alterar(ir, p1, 8);
     PERFORM pg_temp.conferir('T5', 'chapa: estoque', 12.000,
                              (SELECT prod_qtdEstoque FROM sp_Produto_Buscar(p1)));
     PERFORM pg_temp.conferir('T5', 'requisição: valor total', 48.00,
                              (SELECT req_valorTotal FROM sp_Requisicao_Buscar(r)));
 
     /* Teste 6: excluir a requisição -> estoque volta a 20, PM 6,00 */
-    CALL sp_Requisicao_Excluir(r);
+    PERFORM sp_Requisicao_Excluir(r);
     SELECT * INTO v FROM sp_Produto_Buscar(p1);
     PERFORM pg_temp.conferir('T6', 'chapa: estoque', 20.000, v.prod_qtdEstoque);
     PERFORM pg_temp.conferir('T6', 'chapa: preço médio', 6.00, v.prod_precoMedio);
 
     /* Teste 7: excluir a segunda compra -> estoque 10, PM (20*6 - 70)/10 = 5,00 */
-    CALL sp_Compra_Excluir(c2);
+    PERFORM sp_Compra_Excluir(c2);
     SELECT * INTO v FROM sp_Produto_Buscar(p1);
     PERFORM pg_temp.conferir('T7', 'chapa: estoque', 10.000, v.prod_qtdEstoque);
     PERFORM pg_temp.conferir('T7', 'chapa: preço médio', 5.00, v.prod_precoMedio);
@@ -120,10 +120,10 @@ BEGIN
 
     /* Teste 8: consome 8 chapas e tenta excluir a compra 1 (10 chapas)
        -> erro TP010 e nada muda (estoque 2, 1 compra)                 */
-    CALL sp_Requisicao_Inserir(s, NULL, r);
-    CALL sp_ItemRequisicao_Inserir(r, p1, 8, ir);
+    r := sp_Requisicao_Inserir(s, NULL);
+    ir := sp_ItemRequisicao_Inserir(r, p1, 8);
     PERFORM pg_temp.conferir('T8', 'estorno com estoque negativo: código do erro', 'TP010',
-                             pg_temp.erro_de(format('CALL sp_Compra_Excluir(%s)', c1)));
+                             pg_temp.erro_de(format('SELECT sp_Compra_Excluir(%s)', c1)));
     PERFORM pg_temp.conferir('T8', 'chapa: estoque inalterado', 2.000,
                              (SELECT prod_qtdEstoque FROM sp_Produto_Buscar(p1)));
     PERFORM pg_temp.conferir('T8', 'quantidade de compras', 1::BIGINT,
@@ -131,11 +131,11 @@ BEGIN
 
     /* Teste 9: excluir produto com movimentação -> erro TP002 */
     PERFORM pg_temp.conferir('T9', 'excluir produto com compras: código do erro', 'TP002',
-                             pg_temp.erro_de(format('CALL sp_Produto_Excluir(%s)', p1)));
+                             pg_temp.erro_de(format('SELECT sp_Produto_Excluir(%s)', p1)));
 
     /* Teste 10: CNPJ inválido -> 23514 (violação do CHECK CK_FORNECEDOR_cnpj) */
     PERFORM pg_temp.conferir('T10', 'CNPJ "123": código do erro', '23514',
-                             pg_temp.erro_de('CALL sp_Fornecedor_Inserir(''Fornecedor X'', ''123'')'));
+                             pg_temp.erro_de('SELECT sp_Fornecedor_Inserir(''Fornecedor X'', ''123'')'));
 END;
 $$;
 
@@ -152,7 +152,7 @@ BEGIN
     SET ROLE rl_aplicacao;
     e_insert := pg_temp.erro_de('INSERT INTO industria.SETOR (setor_nome) VALUES (''Direto'')');
     e_select := pg_temp.erro_de('SELECT * FROM industria.SETOR');
-    CALL industria.sp_Setor_Inserir('Manutenção', s2);
+    s2 := industria.sp_Setor_Inserir('Manutenção');
     achou := EXISTS (SELECT 1 FROM industria.sp_Setor_Listar('Manut'));
     RESET ROLE;
 
@@ -178,14 +178,14 @@ DECLARE
     manut BIGINT := (SELECT setor_id FROM sp_Setor_Listar('Manutenção'));
     f2 BIGINT; c BIGINT; r BIGINT; i BIGINT;
 BEGIN
-    CALL sp_Fornecedor_Inserir('Metalúrgica Sul S.A.', '98765432000110', f2);
-    CALL sp_Compra_Inserir(f2, '2026-09-15', c);
-    CALL sp_ItemCompra_Inserir(c, chapa, 20, 4.50, i);
-    CALL sp_Compra_Inserir(f1, '2026-09-20', c);
-    CALL sp_ItemCompra_Inserir(c, chapa, 10, 5.50, i);
-    CALL sp_Requisicao_Inserir(manut, '2026-09-21', r);
-    CALL sp_ItemRequisicao_Inserir(r, chapa, 6, i);
-    CALL sp_ItemRequisicao_Inserir(r, paraf, 30, i);
+    f2 := sp_Fornecedor_Inserir('Metalúrgica Sul S.A.', '98765432000110');
+    c := sp_Compra_Inserir(f2, '2026-09-15');
+    i := sp_ItemCompra_Inserir(c, chapa, 20, 4.50);
+    c := sp_Compra_Inserir(f1, '2026-09-20');
+    i := sp_ItemCompra_Inserir(c, chapa, 10, 5.50);
+    r := sp_Requisicao_Inserir(manut, '2026-09-21');
+    i := sp_ItemRequisicao_Inserir(r, chapa, 6);
+    i := sp_ItemRequisicao_Inserir(r, paraf, 30);
 END;
 $$;
 

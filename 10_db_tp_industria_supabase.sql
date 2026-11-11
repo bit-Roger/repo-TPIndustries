@@ -12,20 +12,25 @@
      1. Schema
      2. Tabelas (PK, FK, UNIQUE, CHECK, DEFAULT) e índices
      3. Funções internas e triggers de estoque, preço médio e totais
-     4. Procedures de manutenção (inserir / alterar / excluir)
-     5. Funções de consulta (listar / buscar)
-     6. Funções dos relatórios gerenciais
-     7. Segurança: papel da aplicação só executa procedures e funções
+     4. Rotinas de manutenção (inserir / alterar / excluir)
+     5. Rotinas de consulta (listar / buscar)
+     6. Rotinas dos relatórios gerenciais
+     7. Segurança: a aplicação só executa as rotinas sp_*
 
    Diferenças em relação à versão SQL Server
-     - Tudo fica no schema "industria", e não no "public": assim as
-       tabelas não aparecem na API automática do Supabase.
+     - Tudo fica no schema "industria", e não no "public".
+     - A interface web (HTML/CSS/JavaScript) chama as rotinas pela API
+       REST do Supabase (PostgREST), com o usuário logado (papel
+       "authenticated"). Esse papel recebe só EXECUTE nas rotinas sp_*;
+       as tabelas continuam inacessíveis (requisito 4).
      - IDENTITY -> GENERATED ALWAYS AS IDENTITY; DATETIME2 -> TIMESTAMP;
        DECIMAL -> NUMERIC (mesma precisão).
-     - Manutenção (inserir/alterar/excluir) usa PROCEDURE, chamada com
-       CALL. Consultas e relatórios usam FUNCTION ... RETURNS TABLE,
-       chamadas com SELECT * FROM, porque procedures do PostgreSQL não
-       devolvem linhas.
+     - Os stored procedures são escritos como FUNCTION em PL/pgSQL,
+       porque a API do Supabase só executa funções (CREATE PROCEDURE do
+       PostgreSQL não pode ser chamado por ela). Cada rotina continua
+       sendo um procedimento armazenado no servidor, com o prefixo sp_:
+         manutenção: SELECT sp_Setor_Inserir('Produção');  -> devolve o id
+         consulta  : SELECT * FROM sp_Produto_Listar();
      - Os relatórios que no SQL Server devolviam dois resultados viraram
        duas funções (a ficha usa sp_Produto_Buscar para o cabeçalho; a
        evolução de preço ganhou sp_Rel_EvolucaoPrecoMensal).
@@ -393,30 +398,37 @@ AFTER INSERT OR UPDATE OR DELETE ON ITEM_REQUISICAO
 FOR EACH ROW EXECUTE FUNCTION fn_trg_ITEM_REQUISICAO();
 
 /* =====================================================================
-   4. PROCEDURES DE MANUTENÇÃO
+   4. ROTINAS DE MANUTENÇÃO
    Padrão:
      - SECURITY DEFINER: executam com as permissões do dono do schema,
        por isso a aplicação consegue gravar sem ter acesso às tabelas;
      - SET search_path fixo, como recomenda a documentação do PostgreSQL
        para funções SECURITY DEFINER;
-     - inserções devolvem o ID no último parâmetro (INOUT):
-         CALL sp_Setor_Inserir('Produção', NULL);   -> devolve setor_id
-     - qualquer erro desfaz tudo o que a procedure fez (a chamada é
-       atômica dentro da transação de quem chamou).
+     - inserções devolvem o ID gerado (RETURNS BIGINT):
+         SELECT sp_Setor_Inserir('Produção');   -> devolve setor_id
+       alterações e exclusões não devolvem nada (RETURNS VOID);
+     - qualquer erro desfaz tudo o que a rotina fez (cada chamada pela
+       API é uma transação).
    ===================================================================== */
 
 /* ------------------------------ GRUPO_PRODUTO ------------------------------ */
-CREATE PROCEDURE sp_GrupoProduto_Inserir(p_grupoProd_nome VARCHAR, INOUT p_grupoProd_id BIGINT DEFAULT NULL)
+CREATE FUNCTION sp_GrupoProduto_Inserir(p_grupoProd_nome VARCHAR)
+RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
+DECLARE
+    v_grupoProd_id BIGINT;
 BEGIN
     INSERT INTO GRUPO_PRODUTO (grupoProd_nome)
     VALUES (TRIM(p_grupoProd_nome))
-    RETURNING grupoProd_id INTO p_grupoProd_id;
+    RETURNING grupoProd_id INTO v_grupoProd_id;
+
+    RETURN v_grupoProd_id;
 END;
 $$;
 
-CREATE PROCEDURE sp_GrupoProduto_Alterar(p_grupoProd_id BIGINT, p_grupoProd_nome VARCHAR)
+CREATE FUNCTION sp_GrupoProduto_Alterar(p_grupoProd_id BIGINT, p_grupoProd_nome VARCHAR)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -429,7 +441,8 @@ BEGIN
 END;
 $$;
 
-CREATE PROCEDURE sp_GrupoProduto_Excluir(p_grupoProd_id BIGINT)
+CREATE FUNCTION sp_GrupoProduto_Excluir(p_grupoProd_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -447,9 +460,12 @@ $$;
 
 /* --------------------------------- PRODUTO --------------------------------- */
 -- Estoque, preço médio e última compra são mantidos pelos triggers.
-CREATE PROCEDURE sp_Produto_Inserir(p_grupoProd_fk BIGINT, p_prod_nome VARCHAR, INOUT p_prod_id BIGINT DEFAULT NULL)
+CREATE FUNCTION sp_Produto_Inserir(p_grupoProd_fk BIGINT, p_prod_nome VARCHAR)
+RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
+DECLARE
+    v_prod_id BIGINT;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM GRUPO_PRODUTO WHERE grupoProd_id = p_grupoProd_fk) THEN
         RAISE EXCEPTION 'Grupo de produto não encontrado.' USING ERRCODE = 'TP001';
@@ -457,11 +473,14 @@ BEGIN
 
     INSERT INTO PRODUTO (grupoProd_fk, prod_nome)
     VALUES (p_grupoProd_fk, TRIM(p_prod_nome))
-    RETURNING prod_id INTO p_prod_id;
+    RETURNING prod_id INTO v_prod_id;
+
+    RETURN v_prod_id;
 END;
 $$;
 
-CREATE PROCEDURE sp_Produto_Alterar(p_prod_id BIGINT, p_grupoProd_fk BIGINT, p_prod_nome VARCHAR)
+CREATE FUNCTION sp_Produto_Alterar(p_prod_id BIGINT, p_grupoProd_fk BIGINT, p_prod_nome VARCHAR)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -480,7 +499,8 @@ BEGIN
 END;
 $$;
 
-CREATE PROCEDURE sp_Produto_Excluir(p_prod_id BIGINT)
+CREATE FUNCTION sp_Produto_Excluir(p_prod_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -499,16 +519,22 @@ END;
 $$;
 
 /* ---------------------------------- SETOR ---------------------------------- */
-CREATE PROCEDURE sp_Setor_Inserir(p_setor_nome VARCHAR, INOUT p_setor_id BIGINT DEFAULT NULL)
+CREATE FUNCTION sp_Setor_Inserir(p_setor_nome VARCHAR)
+RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
+DECLARE
+    v_setor_id BIGINT;
 BEGIN
     INSERT INTO SETOR (setor_nome) VALUES (TRIM(p_setor_nome))
-    RETURNING setor_id INTO p_setor_id;
+    RETURNING setor_id INTO v_setor_id;
+
+    RETURN v_setor_id;
 END;
 $$;
 
-CREATE PROCEDURE sp_Setor_Alterar(p_setor_id BIGINT, p_setor_nome VARCHAR)
+CREATE FUNCTION sp_Setor_Alterar(p_setor_id BIGINT, p_setor_nome VARCHAR)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -520,7 +546,8 @@ BEGIN
 END;
 $$;
 
-CREATE PROCEDURE sp_Setor_Excluir(p_setor_id BIGINT)
+CREATE FUNCTION sp_Setor_Excluir(p_setor_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -538,11 +565,12 @@ $$;
 
 /* -------------------------------- FORNECEDOR ------------------------------- */
 -- O CNPJ pode vir com ou sem máscara (00.000.000/0000-00)
-CREATE PROCEDURE sp_Fornecedor_Inserir(p_fornec_razaoSocial VARCHAR, p_fornec_cnpj VARCHAR,
-                                       INOUT p_fornec_id BIGINT DEFAULT NULL)
+CREATE FUNCTION sp_Fornecedor_Inserir(p_fornec_razaoSocial VARCHAR, p_fornec_cnpj VARCHAR)
+RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 DECLARE
+    v_fornec_id BIGINT;
     v_cnpj VARCHAR := regexp_replace(p_fornec_cnpj, '[./-]', '', 'g');
 BEGIN
     IF EXISTS (SELECT 1 FROM FORNECEDOR WHERE fornec_cnpj = v_cnpj) THEN
@@ -551,11 +579,14 @@ BEGIN
 
     INSERT INTO FORNECEDOR (fornec_razaoSocial, fornec_cnpj)
     VALUES (TRIM(p_fornec_razaoSocial), v_cnpj)
-    RETURNING fornec_id INTO p_fornec_id;
+    RETURNING fornec_id INTO v_fornec_id;
+
+    RETURN v_fornec_id;
 END;
 $$;
 
-CREATE PROCEDURE sp_Fornecedor_Alterar(p_fornec_id BIGINT, p_fornec_razaoSocial VARCHAR, p_fornec_cnpj VARCHAR)
+CREATE FUNCTION sp_Fornecedor_Alterar(p_fornec_id BIGINT, p_fornec_razaoSocial VARCHAR, p_fornec_cnpj VARCHAR)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 DECLARE
@@ -576,7 +607,8 @@ BEGIN
 END;
 $$;
 
-CREATE PROCEDURE sp_Fornecedor_Excluir(p_fornec_id BIGINT)
+CREATE FUNCTION sp_Fornecedor_Excluir(p_fornec_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -594,10 +626,12 @@ $$;
 
 /* ---------------------------------- COMPRA --------------------------------- */
 -- compra_valorTotal não é informado: é recalculado pelo trigger de ITEM_COMPRA.
-CREATE PROCEDURE sp_Compra_Inserir(p_fornec_fk BIGINT, p_compra_data TIMESTAMP DEFAULT NULL,
-                                   INOUT p_compra_id BIGINT DEFAULT NULL)
+CREATE FUNCTION sp_Compra_Inserir(p_fornec_fk BIGINT, p_compra_data TIMESTAMP DEFAULT NULL)
+RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
+DECLARE
+    v_compra_id BIGINT;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM FORNECEDOR WHERE fornec_id = p_fornec_fk) THEN
         RAISE EXCEPTION 'Fornecedor não encontrado.' USING ERRCODE = 'TP001';
@@ -605,11 +639,14 @@ BEGIN
 
     INSERT INTO COMPRA (fornec_fk, compra_data)
     VALUES (p_fornec_fk, COALESCE(p_compra_data, now() AT TIME ZONE 'America/Sao_Paulo'))
-    RETURNING compra_id INTO p_compra_id;
+    RETURNING compra_id INTO v_compra_id;
+
+    RETURN v_compra_id;
 END;
 $$;
 
-CREATE PROCEDURE sp_Compra_Alterar(p_compra_id BIGINT, p_fornec_fk BIGINT, p_compra_data TIMESTAMP)
+CREATE FUNCTION sp_Compra_Alterar(p_compra_id BIGINT, p_fornec_fk BIGINT, p_compra_data TIMESTAMP)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -629,7 +666,8 @@ END;
 $$;
 
 -- Exclui a compra inteira: os itens primeiro (o trigger estorna o estoque), depois o cabeçalho.
-CREATE PROCEDURE sp_Compra_Excluir(p_compra_id BIGINT)
+CREATE FUNCTION sp_Compra_Excluir(p_compra_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -643,11 +681,13 @@ END;
 $$;
 
 /* ------------------------------- ITEM_COMPRA ------------------------------- */
-CREATE PROCEDURE sp_ItemCompra_Inserir(p_compra_fk BIGINT, p_prod_fk BIGINT,
-                                       p_itemCompra_qtd NUMERIC, p_itemCompra_valorUni NUMERIC,
-                                       INOUT p_itemCompra_id BIGINT DEFAULT NULL)
+CREATE FUNCTION sp_ItemCompra_Inserir(p_compra_fk BIGINT, p_prod_fk BIGINT,
+                                       p_itemCompra_qtd NUMERIC, p_itemCompra_valorUni NUMERIC)
+RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
+DECLARE
+    v_itemCompra_id BIGINT;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM COMPRA WHERE compra_id = p_compra_fk) THEN
         RAISE EXCEPTION 'Compra não encontrada.' USING ERRCODE = 'TP001';
@@ -667,12 +707,15 @@ BEGIN
 
     INSERT INTO ITEM_COMPRA (compra_fk, prod_fk, itemCompra_qtd, itemCompra_valorUni)
     VALUES (p_compra_fk, p_prod_fk, p_itemCompra_qtd, p_itemCompra_valorUni)
-    RETURNING itemCompra_id INTO p_itemCompra_id;
+    RETURNING itemCompra_id INTO v_itemCompra_id;
+
+    RETURN v_itemCompra_id;
 END;
 $$;
 
-CREATE PROCEDURE sp_ItemCompra_Alterar(p_itemCompra_id BIGINT, p_prod_fk BIGINT,
+CREATE FUNCTION sp_ItemCompra_Alterar(p_itemCompra_id BIGINT, p_prod_fk BIGINT,
                                        p_itemCompra_qtd NUMERIC, p_itemCompra_valorUni NUMERIC)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -700,7 +743,8 @@ BEGIN
 END;
 $$;
 
-CREATE PROCEDURE sp_ItemCompra_Excluir(p_itemCompra_id BIGINT)
+CREATE FUNCTION sp_ItemCompra_Excluir(p_itemCompra_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -713,10 +757,12 @@ END;
 $$;
 
 /* -------------------------------- REQUISICAO ------------------------------- */
-CREATE PROCEDURE sp_Requisicao_Inserir(p_setor_fk BIGINT, p_req_data TIMESTAMP DEFAULT NULL,
-                                       INOUT p_req_id BIGINT DEFAULT NULL)
+CREATE FUNCTION sp_Requisicao_Inserir(p_setor_fk BIGINT, p_req_data TIMESTAMP DEFAULT NULL)
+RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
+DECLARE
+    v_req_id BIGINT;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM SETOR WHERE setor_id = p_setor_fk) THEN
         RAISE EXCEPTION 'Setor não encontrado.' USING ERRCODE = 'TP001';
@@ -724,11 +770,14 @@ BEGIN
 
     INSERT INTO REQUISICAO (setor_fk, req_data)
     VALUES (p_setor_fk, COALESCE(p_req_data, now() AT TIME ZONE 'America/Sao_Paulo'))
-    RETURNING req_id INTO p_req_id;
+    RETURNING req_id INTO v_req_id;
+
+    RETURN v_req_id;
 END;
 $$;
 
-CREATE PROCEDURE sp_Requisicao_Alterar(p_req_id BIGINT, p_setor_fk BIGINT, p_req_data TIMESTAMP)
+CREATE FUNCTION sp_Requisicao_Alterar(p_req_id BIGINT, p_setor_fk BIGINT, p_req_data TIMESTAMP)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -748,7 +797,8 @@ END;
 $$;
 
 -- Exclui a requisição inteira: os itens voltam ao estoque pelo trigger.
-CREATE PROCEDURE sp_Requisicao_Excluir(p_req_id BIGINT)
+CREATE FUNCTION sp_Requisicao_Excluir(p_req_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -763,11 +813,12 @@ $$;
 
 /* ----------------------------- ITEM_REQUISICAO ----------------------------- */
 -- O valor unitário da saída é o preço médio do produto no momento do lançamento.
-CREATE PROCEDURE sp_ItemRequisicao_Inserir(p_req_fk BIGINT, p_prod_fk BIGINT, p_itemReq_qtd NUMERIC,
-                                           INOUT p_itemReq_id BIGINT DEFAULT NULL)
+CREATE FUNCTION sp_ItemRequisicao_Inserir(p_req_fk BIGINT, p_prod_fk BIGINT, p_itemReq_qtd NUMERIC)
+RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 DECLARE
+    v_itemReq_id BIGINT;
     v_pm NUMERIC;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM REQUISICAO WHERE req_id = p_req_fk) THEN
@@ -786,13 +837,16 @@ BEGIN
 
     INSERT INTO ITEM_REQUISICAO (req_fk, prod_fk, itemReq_qtd, itemReq_valorUni)
     VALUES (p_req_fk, p_prod_fk, p_itemReq_qtd, v_pm)
-    RETURNING itemReq_id INTO p_itemReq_id;
+    RETURNING itemReq_id INTO v_itemReq_id;
+
+    RETURN v_itemReq_id;
 END;
 $$;
 
 -- Troca de produto revaloriza o item pelo preço médio do novo produto;
 -- mudança só de quantidade mantém o valor unitário original.
-CREATE PROCEDURE sp_ItemRequisicao_Alterar(p_itemReq_id BIGINT, p_prod_fk BIGINT, p_itemReq_qtd NUMERIC)
+CREATE FUNCTION sp_ItemRequisicao_Alterar(p_itemReq_id BIGINT, p_prod_fk BIGINT, p_itemReq_qtd NUMERIC)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 DECLARE
@@ -820,7 +874,8 @@ BEGIN
 END;
 $$;
 
-CREATE PROCEDURE sp_ItemRequisicao_Excluir(p_itemReq_id BIGINT)
+CREATE FUNCTION sp_ItemRequisicao_Excluir(p_itemReq_id BIGINT)
+RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = industria, pg_temp
 AS $$
 BEGIN
@@ -1191,10 +1246,15 @@ $$;
 
 /* =====================================================================
    7. SEGURANÇA (requisito 4)
-   O papel rl_aplicacao só executa as procedures e funções sp_*.
-   Ele não tem nenhuma permissão nas tabelas nem nas funções internas.
-   As procedures funcionam porque são SECURITY DEFINER.
-   O login da aplicação é criado à parte (ver guia), com senha própria.
+   rl_aplicacao é o papel da aplicação: só executa as rotinas sp_*, sem
+   nenhuma permissão nas tabelas nem nas funções internas (fn_*).
+   As rotinas funcionam porque são SECURITY DEFINER.
+
+   No Supabase a página web entra pela API com o usuário logado, que usa
+   o papel "authenticated". Esse papel é NOINHERIT no Supabase (não herda
+   permissões de outros papéis), por isso recebe diretamente as mesmas
+   permissões de rl_aplicacao. Visitantes sem login (papel "anon") não
+   têm acesso a nada.
    ===================================================================== */
 DO $$
 BEGIN
@@ -1209,12 +1269,24 @@ REVOKE ALL ON ALL TABLES    IN SCHEMA industria FROM PUBLIC;
 REVOKE ALL ON ALL ROUTINES  IN SCHEMA industria FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA industria FROM PUBLIC;
 
-/* No Supabase existem os papéis da API (anon, authenticated, service_role).
-   Garante que nenhum deles tenha acesso ao schema industria.             */
+-- Segunda barreira: RLS ligado e nenhuma política. Mesmo que alguém dê
+-- SELECT numa tabela por engano, nenhuma linha aparece pela API.
+-- As rotinas não são afetadas porque rodam como dono das tabelas.
+ALTER TABLE GRUPO_PRODUTO   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE PRODUTO         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE SETOR           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE FORNECEDOR      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE COMPRA          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ITEM_COMPRA     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE REQUISICAO      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ITEM_REQUISICAO ENABLE ROW LEVEL SECURITY;
+
 DO $$
 DECLARE
     papel TEXT;
+    r     RECORD;
 BEGIN
+    -- Papéis da API do Supabase: começa sem nenhum acesso ao schema
     FOREACH papel IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = papel) THEN
             EXECUTE format('REVOKE ALL ON SCHEMA industria FROM %I', papel);
@@ -1223,30 +1295,26 @@ BEGIN
             EXECUTE format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA industria FROM %I', papel);
         END IF;
     END LOOP;
-END;
-$$;
 
-GRANT USAGE ON SCHEMA industria TO rl_aplicacao;
-
-DO $$
-DECLARE
-    r RECORD;
-BEGIN
-    FOR r IN
-        SELECT p.oid::regprocedure AS assinatura, p.prokind
-          FROM pg_proc p
-          JOIN pg_namespace n ON n.oid = p.pronamespace
-         WHERE n.nspname = 'industria'
-           AND p.proname LIKE 'sp\_%'
-    LOOP
-        IF r.prokind = 'p' THEN
-            EXECUTE format('GRANT EXECUTE ON PROCEDURE %s TO rl_aplicacao', r.assinatura);
-        ELSE
-            EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO rl_aplicacao', r.assinatura);
-        END IF;
+    -- rl_aplicacao e, no Supabase, authenticated: USAGE no schema + EXECUTE nas sp_*
+    FOREACH papel IN ARRAY ARRAY['rl_aplicacao', 'authenticated'] LOOP
+        CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = papel);
+        EXECUTE format('GRANT USAGE ON SCHEMA industria TO %I', papel);
+        FOR r IN
+            SELECT p.oid::regprocedure AS assinatura
+              FROM pg_proc p
+              JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'industria'
+               AND p.proname LIKE 'sp\_%'
+        LOOP
+            EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', r.assinatura, papel);
+        END LOOP;
     END LOOP;
 END;
 $$;
+
+-- Avisa a API do Supabase para reler a lista de funções
+NOTIFY pgrst, 'reload schema';
 
 /* Resumo do que foi criado */
 SELECT 'industria' AS schema,
@@ -1255,6 +1323,6 @@ SELECT 'industria' AS schema,
           JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = 'industria' AND NOT t.tgisinternal)                                 AS triggers,
        (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-         WHERE n.nspname = 'industria' AND p.proname LIKE 'sp\_%' AND p.prokind = 'p')         AS procedures,
+         WHERE n.nspname = 'industria' AND p.proname LIKE 'sp\_%' AND p.provolatile = 'v')     AS rotinas_manutencao,
        (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-         WHERE n.nspname = 'industria' AND p.proname LIKE 'sp\_%' AND p.prokind = 'f')         AS funcoes_consulta;
+         WHERE n.nspname = 'industria' AND p.proname LIKE 'sp\_%' AND p.provolatile = 's')     AS rotinas_consulta;
