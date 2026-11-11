@@ -9,6 +9,6 @@
  * (service_role / secret) neste arquivo.
  */
 window.CONFIG = {
-  SUPABASE_URL: "https://SEU-PROJETO.supabase.co",
-  SUPABASE_KEY: "COLE-AQUI-A-CHAVE-PUBLICA",
+  NEXT_PUBLIC_SUPABASE_URL: "https://cxfrkoiylnbgpjtjlgdu.supabase.co",
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_XRy-ASH14AoWeBpAMQSGPg_JdzFB1rL"
 };
