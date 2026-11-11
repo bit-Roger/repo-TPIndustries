@@ -5,8 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TP Indústria · Compras e Estoque</title>
   <link rel="stylesheet" href="css/estilo.css">
+  <script>
+    /* Registra arquivos que não carregaram ou que têm erro, para mostrar na tela */
+    window.__falhas = [];
+    window.addEventListener("error", function (e) {
+      var alvo = e.target;
+      if (alvo && alvo.tagName === "SCRIPT") {
+        window.__falhas.push("Arquivo não encontrado: " + alvo.getAttribute("src"));
+      } else if (e.filename) {
+        window.__falhas.push("Erro em " + e.filename.split("/").slice(-2).join("/") + " (linha " + e.lineno + "): " + e.message);
+      }
+    }, true);
+  </script>
 </head>
 <body>
+
+  <!-- Aparece enquanto os scripts carregam, ou com a causa do problema se algum falhar -->
+  <section id="tela-carregando" class="tela-central">
+    <div class="cartao-central">
+      <h1>TP Indústria</h1>
+      <p id="carregando-texto">Carregando…</p>
+      <ul id="carregando-falhas"></ul>
+    </div>
+  </section>
 
   <!-- Aviso quando o config.js ainda não foi preenchido -->
   <section id="tela-config" class="tela-central" hidden>
@@ -66,5 +87,24 @@
   <script src="js/ui.js"></script>
   <script src="js/telas.js"></script>
   <script src="js/app.js"></script>
+  <script>
+    (function () {
+      if (typeof window.CONFIG === "undefined" && !window.__falhas.some(function (f) { return f.indexOf("config.js") >= 0; })) {
+        window.__falhas.push("O arquivo js/config.js carregou, mas tem um erro de digitação.");
+      }
+      if (!window.__falhas.length) return;
+      for (var id of ["tela-config", "tela-login", "app"]) document.getElementById(id).hidden = true;
+      document.getElementById("tela-carregando").hidden = false;
+      var jsFaltando = window.__falhas.some(function (f) { return f.indexOf("Arquivo não encontrado: js/") === 0; });
+      var cdnFaltando = window.__falhas.some(function (f) { return f.indexOf("cdn.jsdelivr") >= 0; });
+      document.getElementById("carregando-texto").textContent = jsFaltando
+        ? "A página não achou os arquivos da pasta js. As pastas css e js precisam ficar ao lado do index.html (no GitHub, na raiz do repositório, junto com o index.html)."
+        : cdnFaltando
+          ? "A biblioteca do Supabase não carregou. Confira a internet ou se algum bloqueador está impedindo o acesso a cdn.jsdelivr.net."
+          : "Um arquivo da página tem erro. Se você editou o js/config.js, confira se as aspas e as vírgulas ficaram como no modelo.";
+      var lista = document.getElementById("carregando-falhas");
+      window.__falhas.forEach(function (f) { var li = document.createElement("li"); li.textContent = f; lista.appendChild(li); });
+    })();
+  </script>
 </body>
 </html>

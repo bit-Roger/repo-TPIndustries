@@ -29,7 +29,7 @@ const MENU = [
 const ROTAS = Object.fromEntries(MENU.flatMap((g) => g.itens).map((i) => [i.rota, i]));
 
 function mostrar(id) {
-  for (const tela of ["tela-config", "tela-login", "app"]) {
+  for (const tela of ["tela-carregando", "tela-config", "tela-login", "app"]) {
     document.getElementById(tela).hidden = tela !== id;
   }
 }
@@ -118,4 +118,7 @@ async function iniciar() {
   });
 }
 
-iniciar();
+iniciar().catch((falha) => {
+  mostrar("tela-carregando");
+  document.getElementById("carregando-texto").textContent = `Não foi possível iniciar: ${falha.message}`;
+});
